@@ -344,13 +344,14 @@ async def on_voice_state_update(member, before, after):
                 voice_client.stop()
                 logger.info("Stopped playback due to disconnection")
 
-# Run the bot with automatic restart on failure
-while True:
+def run_bot():
+    """Run the bot with proper event loop handling"""
     try:
         logger.info("Starting bot...")
-        bot.run(TOKEN, log_handler=None, reconnect=True)
+        bot.run(TOKEN, log_handler=None)
     except Exception as e:
-        logger.critical(f"Bot crashed: {e}", exc_info=True)
-        logger.info("Attempting to restart in 30 seconds...")
-        time.sleep(30)
-        continue 
+        logger.critical(f"Failed to start bot: {e}", exc_info=True)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    run_bot() 
