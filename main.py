@@ -9,6 +9,7 @@ import ssl
 from dotenv import load_dotenv
 from shutil import which
 import glob
+import subprocess
 
 print("Starting bot initialization...")
 
@@ -17,46 +18,50 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 print("Token loaded")
 
-# Set FFmpeg path - for both local and Railway environment
-def find_ffmpeg():
-    # First try the system PATH
-    ffmpeg_in_path = which('ffmpeg')
-    if ffmpeg_in_path:
-        print(f"Found FFmpeg in system PATH: {ffmpeg_in_path}")
-        return ffmpeg_in_path
+# Set FFmpeg path and verify installation
+def verify_ffmpeg():
+    try:
+        # Try to run ffmpeg -version
+        result = subprocess.run(['ffmpeg', '-version'], 
+                              capture_output=True, 
+                              text=True)
+        if result.returncode == 0:
+            print("FFmpeg is available in system PATH")
+            return 'ffmpeg'
+    except Exception as e:
+        print(f"Error running ffmpeg: {e}")
 
-    # Then try standard locations
-    standard_paths = [
-        "/usr/bin/ffmpeg",  # Standard Linux path
-        os.path.join(os.getcwd(), "ffmpeg", "ffmpeg.exe")  # Local Windows path
+    # Check common paths
+    paths = [
+        'ffmpeg',
+        '/usr/bin/ffmpeg',
+        os.path.join(os.getcwd(), 'ffmpeg', 'ffmpeg.exe')
     ]
     
-    for path in standard_paths:
-        if os.path.exists(path):
-            print(f"Found FFmpeg in standard location: {path}")
-            return path
-
-    # Finally try Nix store (Railway)
-    try:
-        nix_paths = glob.glob("/nix/store/*/bin/ffmpeg")
-        if nix_paths:
-            print(f"Found FFmpeg in Nix store: {nix_paths[0]}")
-            return nix_paths[0]
-    except Exception as e:
-        print(f"Error checking Nix store: {e}")
-
-    print("FFmpeg not found in any location")
+    for path in paths:
+        try:
+            result = subprocess.run([path, '-version'], 
+                                  capture_output=True, 
+                                  text=True)
+            if result.returncode == 0:
+                print(f"Found working FFmpeg at: {path}")
+                return path
+        except Exception:
+            continue
+    
+    print("FFmpeg not found or not working")
     return None
 
-# Try to find FFmpeg
-FFMPEG_PATH = find_ffmpeg()
+print("Verifying FFmpeg installation...")
+FFMPEG_PATH = verify_ffmpeg()
 if not FFMPEG_PATH:
-    print("Error: FFmpeg not found. Please make sure it's installed correctly.")
-    print("Current working directory:", os.getcwd())
-    print("PATH environment:", os.environ.get('PATH', ''))
+    print("Error: FFmpeg not found or not working")
+    print("Environment information:")
+    print(f"Current directory: {os.getcwd()}")
+    print(f"PATH: {os.environ.get('PATH')}")
+    print(f"Files in current directory: {os.listdir()}")
 else:
     print(f"Using FFmpeg from: {FFMPEG_PATH}")
-    print(f"FFmpeg exists: {os.path.exists(FFMPEG_PATH)}")
 
 # Bot configuration
 print("Setting up bot configuration...")
@@ -64,7 +69,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# YouTube DL options
+# Update YTDL options with verified FFmpeg path
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
     'extractaudio': True,
@@ -80,9 +85,11 @@ YTDL_OPTIONS = {
     'default_search': 'auto',
     'source_address': '0.0.0.0',
     'prefer_insecure': True,
-    'no_check_certificate': True,
-    'ffmpeg_location': os.path.dirname(FFMPEG_PATH)
+    'no_check_certificate': True
 }
+
+if FFMPEG_PATH:
+    YTDL_OPTIONS['ffmpeg_location'] = os.path.dirname(FFMPEG_PATH) if os.path.dirname(FFMPEG_PATH) else '.'
 
 # FFmpeg options
 FFMPEG_OPTIONS = {

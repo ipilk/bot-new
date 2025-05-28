@@ -1,13 +1,18 @@
 [build]
 builder = "nixpacks"
-buildCommand = "pip install -r requirements.txt"
+buildCommand = """
+apt-get update
+apt-get install -y ffmpeg
+pip install -r requirements.txt
+ffmpeg -version
+which ffmpeg
+"""
 
 [deploy]
 startCommand = "python main.py"
 restartPolicyType = "on_failure"
 
 [phases.setup]
-nixPkgs = ["ffmpeg"]
 aptPkgs = ["python3", "python3-pip", "opus-tools", "libopus0"]
 
 [phases.build]
