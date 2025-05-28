@@ -1,11 +1,7 @@
-# Version control
+# Git
 .git
 .gitignore
 .gitattributes
-
-# Environment variables
-.env
-.env.*
 
 # Python
 __pycache__/
@@ -29,15 +25,30 @@ var/
 .installed.cfg
 *.egg
 
+# Virtual Environment
+venv/
+ENV/
+
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
 
+# Logs
+*.log
+
+# Local development
+.env
+.env.local
+*.db
+*.sqlite3
+
+# Environment variables
+.env.*
+
 # Local development
 ffmpeg/
-*.log
 .DS_Store
 Thumbs.db
 README.md 
