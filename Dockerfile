@@ -6,18 +6,13 @@ WORKDIR /app
 RUN apt-get update && \
     apt-get install -y \
     ffmpeg \
-    opus-tools \
-    libopus0 \
-    libopus-dev \
+    python3-pip \
     git \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* \
-    && ffmpeg -version
+    && rm -rf /var/lib/apt/lists/*
 
 # Verify FFmpeg installation
-RUN ffmpeg -version && \
-    ffmpeg -protocols | grep https && \
-    ffmpeg -codecs | grep opus
+RUN ffmpeg -version
 
 # Install Python dependencies
 COPY requirements.txt .
@@ -26,18 +21,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY . .
 
-# Set environment for build phase
-ENV DOCKER_BUILD=true \
-    PYTHONUNBUFFERED=1 \
-    FFMPEG_PATH=/usr/bin/ffmpeg \
-    PATH="/usr/local/bin:${PATH}"
-
-# Run health checks in build mode
-RUN python healthcheck.py
-
-# Reset environment for runtime
-ENV DOCKER_BUILD=false \
-    RAILWAY_ENVIRONMENT=production
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    FFMPEG_PATH=/usr/bin/ffmpeg
 
 # Start the bot
 CMD ["python", "main.py"] 

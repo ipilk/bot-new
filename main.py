@@ -291,44 +291,35 @@ async def ensure_voice_client(interaction: discord.Interaction, channel: discord
 async def play(interaction: discord.Interaction, url: str):
     """Play a song from YouTube"""
     try:
-        # Defer the response immediately with a longer timeout
-        await interaction.response.defer(ephemeral=False, thinking=True)
-        logger.info(f"Received play command from {interaction.user} for URL: {url}")
-
-        # Check voice state
+        # Initial response
+        await interaction.response.defer(ephemeral=False)
+        
+        # Check if user is in a voice channel
         if not interaction.user.voice:
-            await interaction.followup.send("يجب أن تكون في قناة صوتية!", ephemeral=True)
+            await interaction.followup.send("❌ يجب أن تكون في قناة صوتية!", ephemeral=True)
             return
 
         voice_channel = interaction.user.voice.channel
-        if not voice_channel:
-            await interaction.followup.send("لم أتمكن من العثور على قناة صوتية!", ephemeral=True)
-            return
-
+        
         try:
-            # Connect to voice
-            try:
-                voice_client = interaction.guild.voice_client
-                if voice_client:
-                    if voice_client.channel != voice_channel:
-                        await voice_client.move_to(voice_channel)
-                else:
-                    voice_client = await voice_channel.connect(timeout=60)
-                logger.info(f"Connected to voice channel: {voice_channel.name}")
-            except Exception as e:
-                logger.error(f"Failed to connect to voice channel: {e}")
-                await interaction.followup.send("❌ فشل في الاتصال بالقناة الصوتية", ephemeral=True)
-                return
-
+            # Connect to voice channel
+            voice_client = interaction.guild.voice_client
+            if voice_client:
+                if voice_client.channel != voice_channel:
+                    await voice_client.move_to(voice_channel)
+            else:
+                voice_client = await voice_channel.connect(timeout=60)
+            
+            # Update status message
+            await interaction.followup.send("🔄 جاري تحميل المقطع...")
+            
             # Get audio source
-            try:
-                audio_source, title = await bot.get_audio_source(url, interaction)
-            except Exception as e:
-                logger.error(f"Failed to get audio source: {e}")
-                await interaction.followup.send("❌ فشل في تحميل المقطع الصوتي", ephemeral=True)
-                return
-
-            # Play audio
+            audio_source, title = await bot.get_audio_source(url, interaction)
+            
+            # Play the audio
+            if voice_client.is_playing():
+                voice_client.stop()
+            
             def after_playing(error):
                 if error:
                     logger.error(f"Error in playback: {error}")
@@ -336,69 +327,39 @@ async def play(interaction: discord.Interaction, url: str):
                         interaction.followup.send("❌ حدث خطأ أثناء التشغيل"),
                         bot.loop
                     )
-
-            try:
-                if voice_client.is_playing():
-                    voice_client.stop()
-                    logger.info("Stopped current playback")
-
-                voice_client.play(audio_source, after=after_playing)
-                logger.info(f"Started playing: {title}")
-                
-                await interaction.followup.send(f"🎵 جاري تشغيل: **{title}**")
-            except Exception as e:
-                logger.error(f"Failed to play audio: {e}")
-                await interaction.followup.send("❌ فشل في تشغيل المقطع الصوتي", ephemeral=True)
-                return
-
+            
+            voice_client.play(audio_source, after=after_playing)
+            await interaction.edit_original_response(content=f"🎵 جاري تشغيل: **{title}**")
+            
         except Exception as e:
             logger.error(f"Error in play command: {e}", exc_info=True)
-            error_message = f"❌ حدث خطأ: {str(e)}"
-            if len(error_message) > 1500:
-                error_message = error_message[:1500] + "..."
-            await interaction.followup.send(error_message, ephemeral=True)
-
+            await interaction.followup.send(f"❌ حدث خطأ: {str(e)}", ephemeral=True)
+            
     except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        try:
-            if not interaction.response.is_done():
-                await interaction.response.send_message("❌ حدث خطأ غير متوقع", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ حدث خطأ غير متوقع", ephemeral=True)
-        except Exception as send_error:
-            logger.error(f"Failed to send error message: {send_error}")
+        logger.error(f"Unexpected error in play command: {e}", exc_info=True)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("❌ حدث خطأ غير متوقع", ephemeral=True)
+        else:
+            await interaction.followup.send("❌ حدث خطأ غير متوقع", ephemeral=True)
 
 @bot.tree.command(name="stop", description="إيقاف تشغيل المقطع الصوتي والخروج من القناة")
 async def stop(interaction: discord.Interaction):
     """Stop playing and disconnect"""
     try:
         await interaction.response.defer(ephemeral=False)
-        logger.info(f"Received stop command from {interaction.user}")
-
+        
         voice_client = interaction.guild.voice_client
         if voice_client:
-            try:
-                if voice_client.is_playing():
-                    voice_client.stop()
-                    logger.info("Stopped playback")
-                await voice_client.disconnect()
-                logger.info("Disconnected from voice channel")
-                await interaction.followup.send("✅ تم إيقاف التشغيل وقطع الاتصال")
-            except Exception as e:
-                logger.error(f"Error while stopping/disconnecting: {e}")
-                await interaction.followup.send("❌ حدث خطأ أثناء محاولة الإيقاف", ephemeral=True)
+            if voice_client.is_playing():
+                voice_client.stop()
+            await voice_client.disconnect()
+            await interaction.followup.send("✅ تم إيقاف التشغيل والخروج من القناة")
         else:
-            await interaction.followup.send("البوت غير متصل بأي قناة صوتية!", ephemeral=True)
-
+            await interaction.followup.send("❌ البوت غير متصل بأي قناة صوتية!", ephemeral=True)
+            
     except Exception as e:
         logger.error(f"Error in stop command: {e}", exc_info=True)
-        try:
-            if not interaction.response.is_done():
-                await interaction.response.send_message("❌ حدث خطأ أثناء محاولة الإيقاف", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ حدث خطأ أثناء محاولة الإيقاف", ephemeral=True)
-        except Exception as send_error:
-            logger.error(f"Failed to send error message: {send_error}")
+        await interaction.followup.send("❌ حدث خطأ أثناء محاولة الإيقاف", ephemeral=True)
 
 @bot.event
 async def on_voice_state_update(member, before, after):
