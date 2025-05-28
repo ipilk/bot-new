@@ -20,6 +20,10 @@ logging.basicConfig(level=logging.INFO,
                    format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('discord_bot')
 
+# Global variables for voice state
+voice_clients = {}
+current_players = {}
+
 print("\n=== Bot Initialization Started ===")
 logger.info(f"Python version: {platform.python_version()}")
 logger.info(f"Operating System: {platform.system()} {platform.release()}")
@@ -70,7 +74,8 @@ print("\n=== Configuring Bot ===")
 # Bot configuration
 intents = discord.Intents.default()
 intents.message_content = True
-intents.voice_states = True  # Enable voice state updates
+intents.voice_states = True
+intents.guilds = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # YouTube DL options
@@ -87,13 +92,8 @@ YTDL_OPTIONS = {
     'quiet': True,
     'no_warnings': True,
     'default_search': 'auto',
-    'source_address': '0.0.0.0',
-    'prefer_insecure': True,
-    'no_check_certificate': True
+    'source_address': '0.0.0.0'
 }
-
-if FFMPEG_PATH:
-    YTDL_OPTIONS['ffmpeg_location'] = os.path.dirname(FFMPEG_PATH) if os.path.dirname(FFMPEG_PATH) else '.'
 
 # FFmpeg options
 FFMPEG_OPTIONS = {
@@ -105,33 +105,45 @@ logger.info("Bot configuration completed")
 
 # Create YouTube DL client
 print("\n=== Initializing YouTube-DL ===")
-ssl._create_default_https_context = ssl._create_unverified_context
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 logger.info("YouTube-DL initialized")
 
-class YTDLSource(discord.PCMVolumeTransformer):
-    def __init__(self, source, *, data, volume=0.5):
-        super().__init__(source, volume)
-        self.data = data
-        self.title = data.get('title')
-        self.url = data.get('url')
+async def ensure_voice_client(interaction: discord.Interaction, channel: discord.VoiceChannel) -> discord.VoiceClient:
+    """Ensure bot is connected to voice channel"""
+    guild_id = interaction.guild_id
+    if guild_id in voice_clients:
+        voice_client = voice_clients[guild_id]
+        if voice_client.is_connected():
+            if voice_client.channel != channel:
+                await voice_client.move_to(channel)
+            return voice_client
+        else:
+            del voice_clients[guild_id]
 
-    @classmethod
-    async def from_url(cls, url, *, loop=None):
-        loop = loop or asyncio.get_event_loop()
-        try:
-            logger.info(f"Extracting info from URL: {url}")
-            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
-            
-            if 'entries' in data:
-                data = data['entries'][0]
-                
-            filename = data['url']
-            logger.info(f"Creating audio source for: {data.get('title', 'Unknown title')}")
-            return cls(discord.FFmpegPCMAudio(filename, executable=FFMPEG_PATH, **FFMPEG_OPTIONS), data=data)
-        except Exception as e:
-            logger.error(f"Error in from_url: {e}", exc_info=True)
-            raise e
+    voice_client = await channel.connect(timeout=60, reconnect=True)
+    voice_clients[guild_id] = voice_client
+    return voice_client
+
+async def get_audio_source(url: str) -> tuple:
+    """Get audio source from URL"""
+    loop = asyncio.get_event_loop()
+    try:
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
+        
+        if 'entries' in data:
+            data = data['entries'][0]
+
+        return (
+            discord.FFmpegPCMAudio(
+                data['url'],
+                executable=FFMPEG_PATH,
+                **FFMPEG_OPTIONS
+            ),
+            data.get('title', 'Unknown title')
+        )
+    except Exception as e:
+        logger.error(f"Error getting audio source: {e}", exc_info=True)
+        raise
 
 @bot.event
 async def on_ready():
@@ -148,86 +160,96 @@ async def on_ready():
 @app_commands.describe(url="رابط مقطع اليوتيوب")
 async def play(interaction: discord.Interaction, url: str):
     """Plays audio from YouTube URL"""
-    logger.info(f"Received play command from {interaction.user} with URL: {url}")
-    
     try:
+        # Initial response to avoid timeout
+        await interaction.response.defer(ephemeral=False, thinking=True)
+        logger.info(f"Received play command from {interaction.user} with URL: {url}")
+
+        # Check voice state
         if not interaction.user.voice:
-            await interaction.response.send_message("أنت لست متصل بقناة صوتية!", ephemeral=True)
+            await interaction.followup.send("أنت لست متصل بقناة صوتية!", ephemeral=True)
             return
 
         channel = interaction.user.voice.channel
         if not channel:
-            await interaction.response.send_message("لم أتمكن من العثور على قناة صوتية!", ephemeral=True)
+            await interaction.followup.send("لم أتمكن من العثور على قناة صوتية!", ephemeral=True)
             return
 
-        # Check if FFmpeg exists
-        if not os.path.exists(FFMPEG_PATH):
-            error_msg = f"لم يتم العثور على FFmpeg في المسار: {FFMPEG_PATH}"
-            logger.error(error_msg)
-            await interaction.response.send_message(error_msg, ephemeral=True)
+        # Connect to voice
+        try:
+            voice_client = await ensure_voice_client(interaction, channel)
+        except Exception as e:
+            logger.error(f"Error connecting to voice: {e}", exc_info=True)
+            await interaction.followup.send("حدث خطأ أثناء محاولة الاتصال بالقناة الصوتية", ephemeral=True)
             return
 
-        # Defer the response since audio loading might take time
-        await interaction.response.defer(ephemeral=False, thinking=True)
-        logger.info("Response deferred, processing audio...")
+        # Get audio source
+        try:
+            audio_source, title = await get_audio_source(url)
+        except Exception as e:
+            logger.error(f"Error getting audio source: {e}", exc_info=True)
+            await interaction.followup.send(f"حدث خطأ أثناء محاولة تحميل المقطع: {str(e)}", ephemeral=True)
+            return
 
-        voice_client = interaction.guild.voice_client
-
-        if voice_client and voice_client.is_connected():
-            await voice_client.move_to(channel)
-        else:
-            voice_client = await channel.connect()
-            logger.info(f"Connected to voice channel: {channel.name}")
-
-        player = await YTDLSource.from_url(url, loop=bot.loop)
+        # Play audio
         if voice_client.is_playing():
             voice_client.stop()
-            logger.info("Stopped current playback")
-            
+
         def after_playing(error):
             if error:
                 logger.error(f"Error after playing: {error}")
             else:
-                logger.info("Finished playing audio")
+                logger.info(f"Finished playing: {title}")
 
-        voice_client.play(player, after=after_playing)
-        logger.info(f"Started playing: {player.title}")
-        await interaction.followup.send(f'🎵 جاري تشغيل: **{player.title}**')
-        
+        voice_client.play(audio_source, after=after_playing)
+        logger.info(f"Started playing: {title}")
+        await interaction.followup.send(f'🎵 جاري تشغيل: **{title}**')
+
     except Exception as e:
-        logger.error(f"Error in play command: {e}", exc_info=True)
-        error_message = f"حدث خطأ أثناء تشغيل المقطع: {str(e)}"
+        logger.error(f"Unexpected error in play command: {e}", exc_info=True)
         if not interaction.response.is_done():
-            await interaction.response.send_message(error_message, ephemeral=True)
+            await interaction.response.send_message("حدث خطأ غير متوقع", ephemeral=True)
         else:
-            await interaction.followup.send(error_message, ephemeral=True)
+            await interaction.followup.send("حدث خطأ غير متوقع", ephemeral=True)
 
 @bot.tree.command(name="stop", description="إيقاف تشغيل المقطع الصوتي والخروج من القناة")
 async def stop(interaction: discord.Interaction):
     """Stops and disconnects the bot from voice"""
-    logger.info(f"Received stop command from {interaction.user}")
     try:
-        voice_client = interaction.guild.voice_client
-        if voice_client:
+        await interaction.response.defer(ephemeral=False, thinking=True)
+        logger.info(f"Received stop command from {interaction.user}")
+
+        guild_id = interaction.guild_id
+        voice_client = voice_clients.get(guild_id)
+
+        if voice_client and voice_client.is_connected():
+            if voice_client.is_playing():
+                voice_client.stop()
             await voice_client.disconnect()
+            del voice_clients[guild_id]
             logger.info("Disconnected from voice channel")
-            await interaction.response.send_message("تم إيقاف التشغيل وقطع الاتصال ✅")
+            await interaction.followup.send("تم إيقاف التشغيل وقطع الاتصال ✅")
         else:
-            await interaction.response.send_message("البوت غير متصل بأي قناة صوتية!", ephemeral=True)
+            await interaction.followup.send("البوت غير متصل بأي قناة صوتية!", ephemeral=True)
+
     except Exception as e:
         logger.error(f"Error in stop command: {e}", exc_info=True)
-        await interaction.response.send_message(f"حدث خطأ أثناء محاولة إيقاف التشغيل: {str(e)}", ephemeral=True)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("حدث خطأ أثناء محاولة إيقاف التشغيل", ephemeral=True)
+        else:
+            await interaction.followup.send("حدث خطأ أثناء محاولة إيقاف التشغيل", ephemeral=True)
 
 @bot.event
 async def on_voice_state_update(member, before, after):
     """Handle voice state updates"""
     if member == bot.user and after.channel is None:  # Bot was disconnected
-        logger.info("Bot was disconnected from voice channel")
-        for guild in bot.guilds:
-            voice_client = guild.voice_client
+        guild_id = before.channel.guild.id
+        if guild_id in voice_clients:
+            voice_client = voice_clients[guild_id]
             if voice_client and voice_client.is_playing():
                 voice_client.stop()
-                logger.info("Stopped playback due to disconnection")
+            del voice_clients[guild_id]
+            logger.info("Cleaned up voice client after disconnection")
 
 logger.info("Starting bot...")
 try:
