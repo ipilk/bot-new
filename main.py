@@ -8,6 +8,7 @@ import certifi
 import ssl
 from dotenv import load_dotenv
 from shutil import which
+import glob
 
 print("Starting bot initialization...")
 
@@ -18,32 +19,44 @@ print("Token loaded")
 
 # Set FFmpeg path - for both local and Railway environment
 def find_ffmpeg():
-    possible_paths = [
-        "/usr/bin/ffmpeg",           # Standard Linux/Railway path
-        "/nix/store/*/bin/ffmpeg",   # Nix package path
-        os.path.join(os.getcwd(), "ffmpeg", "ffmpeg.exe"),  # Local Windows path
-        which('ffmpeg')              # System PATH
+    # First try the system PATH
+    ffmpeg_in_path = which('ffmpeg')
+    if ffmpeg_in_path:
+        print(f"Found FFmpeg in system PATH: {ffmpeg_in_path}")
+        return ffmpeg_in_path
+
+    # Then try standard locations
+    standard_paths = [
+        "/usr/bin/ffmpeg",  # Standard Linux path
+        os.path.join(os.getcwd(), "ffmpeg", "ffmpeg.exe")  # Local Windows path
     ]
     
-    for path in possible_paths:
-        if '*' in path:  # Handle Nix store path
-            import glob
-            matches = glob.glob(path)
-            if matches:
-                path = matches[0]
-        
-        if path and os.path.exists(path):
-            print(f"Found FFmpeg at: {path}")
+    for path in standard_paths:
+        if os.path.exists(path):
+            print(f"Found FFmpeg in standard location: {path}")
             return path
-    
-    print("FFmpeg not found in any standard location")
+
+    # Finally try Nix store (Railway)
+    try:
+        nix_paths = glob.glob("/nix/store/*/bin/ffmpeg")
+        if nix_paths:
+            print(f"Found FFmpeg in Nix store: {nix_paths[0]}")
+            return nix_paths[0]
+    except Exception as e:
+        print(f"Error checking Nix store: {e}")
+
+    print("FFmpeg not found in any location")
     return None
 
+# Try to find FFmpeg
 FFMPEG_PATH = find_ffmpeg()
 if not FFMPEG_PATH:
     print("Error: FFmpeg not found. Please make sure it's installed correctly.")
+    print("Current working directory:", os.getcwd())
+    print("PATH environment:", os.environ.get('PATH', ''))
 else:
     print(f"Using FFmpeg from: {FFMPEG_PATH}")
+    print(f"FFmpeg exists: {os.path.exists(FFMPEG_PATH)}")
 
 # Bot configuration
 print("Setting up bot configuration...")
