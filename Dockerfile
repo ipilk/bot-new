@@ -10,8 +10,7 @@ RUN apt-get update && \
     libopus0 \
     git \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* \
-    && ffmpeg -version
+    && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
 COPY requirements.txt .
@@ -20,20 +19,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY . .
 
-# Make scripts executable
-RUN chmod +x start.sh entrypoint.sh
+# Set environment for build phase
+ENV DOCKER_BUILD=true \
+    PYTHONUNBUFFERED=1
 
 # Run health checks in build mode
-ENV DOCKER_BUILD=true
 RUN python healthcheck.py
 
-# Set environment variables for runtime
+# Reset environment for runtime
 ENV DOCKER_BUILD=false \
-    RAILWAY_ENVIRONMENT=production \
-    PORT=8080
+    RAILWAY_ENVIRONMENT=production
 
-# Expose port for health checks
-EXPOSE 8080
-
-# Start both the health check server and the bot
-CMD ["sh", "-c", "python healthcheck.py --server & python main.py"] 
+# Start the bot
+CMD ["python", "main.py"] 

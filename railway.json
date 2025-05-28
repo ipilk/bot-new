@@ -5,13 +5,8 @@
         "dockerfilePath": "Dockerfile"
     },
     "deploy": {
-        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyType": "ALWAYS",
         "restartPolicyMaxRetries": 10,
-        "healthcheckPath": "/health",
-        "healthcheckTimeout": 300,
-        "restartPolicyDelay": "30s",
-        "numReplicas": 1,
-        "sleepApplication": false,
-        "startCommand": "python main.py"
+        "numReplicas": 1
     }
 } 

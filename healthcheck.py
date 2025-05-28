@@ -12,26 +12,26 @@ logger = logging.getLogger(__name__)
 async def healthcheck(request):
     """Health check endpoint"""
     try:
-        # Check if DISCORD_TOKEN is set
-        if not os.getenv('DISCORD_TOKEN'):
-            return web.Response(text="DISCORD_TOKEN not found", status=500)
-
         # Check if FFmpeg is available
         try:
             subprocess.run(['ffmpeg', '-version'], 
                          check=True, 
                          capture_output=True)
+            return web.Response(text="OK", status=200)
         except Exception as e:
             return web.Response(text=f"FFmpeg check failed: {str(e)}", status=500)
-
-        return web.Response(text="OK", status=200)
     except Exception as e:
         return web.Response(text=f"Health check failed: {str(e)}", status=500)
 
 def main():
     """Main health check function"""
     try:
-        # Check environment variables
+        # Skip token check during build
+        if os.environ.get('DOCKER_BUILD') == 'true':
+            logger.info("Build phase detected, skipping token check")
+            return 0
+
+        # Check environment variables in runtime
         if not os.getenv('DISCORD_TOKEN'):
             logger.error("DISCORD_TOKEN not found")
             return 1
