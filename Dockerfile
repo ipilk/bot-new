@@ -20,13 +20,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY . .
 
+# Make start script executable
+RUN chmod +x start.sh
+
 # Run health checks in build mode
 ENV DOCKER_BUILD=true
 RUN python healthcheck.py
 
-# Set environment variable to indicate we're in Railway
+# Set environment variables for runtime
 ENV DOCKER_BUILD=false \
     RAILWAY_ENVIRONMENT=production
 
-# Start the bot
-CMD ["python", "main.py"] 
+# Start the bot using the start script
+CMD ["./start.sh"] 
