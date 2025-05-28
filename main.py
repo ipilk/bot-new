@@ -10,44 +10,54 @@ from dotenv import load_dotenv
 from shutil import which
 import glob
 import subprocess
+import platform
 
-print("Starting bot initialization...")
+print("\n=== Bot Initialization Started ===")
+print(f"Python version: {platform.python_version()}")
+print(f"Operating System: {platform.system()} {platform.release()}")
 print(f"Running in environment: {os.environ.get('RAILWAY_ENVIRONMENT', 'local')}")
+print(f"Current working directory: {os.getcwd()}")
 
 # Load environment variables
+print("\n=== Loading Environment Variables ===")
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
     print("Error: DISCORD_TOKEN not found in environment variables")
     print("Available environment variables:", [k for k in os.environ.keys() if not k.startswith('PATH')])
     raise RuntimeError("DISCORD_TOKEN is required")
-print("Token loaded successfully")
+print("✓ Token loaded successfully")
 
 # Verify FFmpeg installation
+print("\n=== Verifying FFmpeg Installation ===")
 try:
-    subprocess.run(['ffmpeg', '-version'], check=True, capture_output=True)
+    ffmpeg_version = subprocess.run(['ffmpeg', '-version'], 
+                                  check=True, 
+                                  capture_output=True, 
+                                  text=True).stdout.split('\n')[0]
     FFMPEG_PATH = 'ffmpeg'
-    print("FFmpeg is available in system PATH")
-except subprocess.CalledProcessError:
-    print("Error: FFmpeg command failed")
+    print(f"✓ {ffmpeg_version}")
+except subprocess.CalledProcessError as e:
+    print(f"Error running FFmpeg: {e}")
+    print(f"FFmpeg error output: {e.stderr}")
     FFMPEG_PATH = None
 except FileNotFoundError:
     print("Error: FFmpeg not found in system PATH")
     FFMPEG_PATH = None
 
 if not FFMPEG_PATH:
-    print("Critical: FFmpeg is required but not found")
-    print(f"Current directory: {os.getcwd()}")
-    print(f"PATH: {os.environ.get('PATH')}")
+    print("\n=== FFmpeg Error Details ===")
+    print(f"Current directory contents: {os.listdir()}")
+    print(f"PATH environment: {os.environ.get('PATH')}")
     raise RuntimeError("FFmpeg not found")
 
+print("\n=== Configuring Bot ===")
 # Bot configuration
-print("Setting up bot configuration...")
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Update YTDL options with verified FFmpeg path
+# YouTube DL options
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
     'extractaudio': True,
@@ -75,9 +85,13 @@ FFMPEG_OPTIONS = {
     'options': '-vn'
 }
 
-# Create YouTube DL client with SSL context
+print("✓ Bot configuration completed")
+
+# Create YouTube DL client
+print("\n=== Initializing YouTube-DL ===")
 ssl._create_default_https_context = ssl._create_unverified_context
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
+print("✓ YouTube-DL initialized")
 
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
@@ -103,10 +117,12 @@ class YTDLSource(discord.PCMVolumeTransformer):
 
 @bot.event
 async def on_ready():
-    print(f'Bot is ready! Logged in as {bot.user}')
+    print("\n=== Bot is Ready! ===")
+    print(f"Logged in as: {bot.user.name} (ID: {bot.user.id})")
+    print(f"Discord.py version: {discord.__version__}")
     try:
         synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} command(s)")
+        print(f"✓ Synced {len(synced)} command(s)")
     except Exception as e:
         print(f"Failed to sync commands: {e}")
 
