@@ -179,13 +179,24 @@ class MusicBot(commands.Bot):
         """Called when an error occurs"""
         logger.error(f"Error in {event_method}: {traceback.format_exc()}")
 
-    async def get_audio_source(self, url: str) -> tuple:
+    async def get_audio_source(self, url: str, interaction: discord.Interaction) -> tuple:
         """Get audio source from URL with retries"""
         try:
+            # Send initial progress message
+            await interaction.edit_original_response(content="جاري تحميل المعلومات... ⏳")
+            
             # Extract video info
             logger.info("Extracting video information...")
             loop = asyncio.get_event_loop()
-            data = await loop.run_in_executor(None, lambda: self.ytdl.extract_info(url, download=False))
+            
+            try:
+                data = await loop.run_in_executor(None, lambda: self.ytdl.extract_info(url, download=False))
+            except Exception as e:
+                logger.error(f"Failed to extract video info: {e}")
+                await interaction.edit_original_response(content="❌ فشل في تحميل معلومات الفيديو")
+                raise
+            
+            await interaction.edit_original_response(content="جاري تجهيز الصوت... 🎵")
             
             if 'entries' in data:
                 data = data['entries'][0]
@@ -193,19 +204,23 @@ class MusicBot(commands.Bot):
             # Get direct audio URL
             audio_url = data.get('url')
             if not audio_url:
+                await interaction.edit_original_response(content="❌ لم يتم العثور على رابط الصوت")
                 raise ValueError("Could not get audio URL from video")
 
-            logger.info(f"Got audio URL: {audio_url[:50]}...")  # Log only first 50 chars for safety
+            logger.info(f"Got audio URL: {audio_url[:50]}...")
 
             # Create FFmpeg audio source
-            audio_source = discord.FFmpegPCMAudio(
-                audio_url,
-                executable=FFMPEG_PATH,
-                **FFMPEG_OPTIONS
-            )
-            
-            # Add volume transformer
-            audio_source = discord.PCMVolumeTransformer(audio_source)
+            try:
+                audio_source = discord.FFmpegPCMAudio(
+                    audio_url,
+                    executable=FFMPEG_PATH,
+                    **FFMPEG_OPTIONS
+                )
+                audio_source = discord.PCMVolumeTransformer(audio_source)
+            except Exception as e:
+                logger.error(f"Failed to create audio source: {e}")
+                await interaction.edit_original_response(content="❌ فشل في إنشاء مصدر الصوت")
+                raise
             
             return audio_source, data.get('title', 'Unknown')
         except Exception as e:
@@ -275,9 +290,11 @@ async def ensure_voice_client(interaction: discord.Interaction, channel: discord
 async def play(interaction: discord.Interaction, url: str):
     """Play a song from YouTube"""
     try:
+        # Defer the response immediately with a longer timeout
         await interaction.response.defer(ephemeral=False, thinking=True)
         logger.info(f"Received play command from {interaction.user} for URL: {url}")
 
+        # Check voice state
         if not interaction.user.voice:
             await interaction.followup.send("يجب أن تكون في قناة صوتية!", ephemeral=True)
             return
@@ -288,50 +305,67 @@ async def play(interaction: discord.Interaction, url: str):
             return
 
         try:
-            # Get or create voice client
-            voice_client = interaction.guild.voice_client
-            if voice_client:
-                if voice_client.channel != voice_channel:
-                    await voice_client.move_to(voice_channel)
-            else:
-                voice_client = await voice_channel.connect(timeout=60)
-            
-            logger.info(f"Connected to voice channel: {voice_channel.name}")
+            # Connect to voice
+            try:
+                voice_client = interaction.guild.voice_client
+                if voice_client:
+                    if voice_client.channel != voice_channel:
+                        await voice_client.move_to(voice_channel)
+                else:
+                    voice_client = await voice_channel.connect(timeout=60)
+                logger.info(f"Connected to voice channel: {voice_channel.name}")
+            except Exception as e:
+                logger.error(f"Failed to connect to voice channel: {e}")
+                await interaction.followup.send("❌ فشل في الاتصال بالقناة الصوتية", ephemeral=True)
+                return
 
             # Get audio source
-            audio_source, title = await bot.get_audio_source(url)
-            
-            # Play the audio with callback
+            try:
+                audio_source, title = await bot.get_audio_source(url, interaction)
+            except Exception as e:
+                logger.error(f"Failed to get audio source: {e}")
+                await interaction.followup.send("❌ فشل في تحميل المقطع الصوتي", ephemeral=True)
+                return
+
+            # Play audio
             def after_playing(error):
                 if error:
                     logger.error(f"Error in playback: {error}")
                     asyncio.run_coroutine_threadsafe(
-                        interaction.followup.send("حدث خطأ أثناء التشغيل"),
+                        interaction.followup.send("❌ حدث خطأ أثناء التشغيل"),
                         bot.loop
                     )
 
-            if voice_client.is_playing():
-                voice_client.stop()
-                logger.info("Stopped current playback")
+            try:
+                if voice_client.is_playing():
+                    voice_client.stop()
+                    logger.info("Stopped current playback")
 
-            voice_client.play(audio_source, after=after_playing)
-            logger.info(f"Started playing: {title}")
-            
-            await interaction.followup.send(f"🎵 جاري تشغيل: **{title}**")
+                voice_client.play(audio_source, after=after_playing)
+                logger.info(f"Started playing: {title}")
+                
+                await interaction.followup.send(f"🎵 جاري تشغيل: **{title}**")
+            except Exception as e:
+                logger.error(f"Failed to play audio: {e}")
+                await interaction.followup.send("❌ فشل في تشغيل المقطع الصوتي", ephemeral=True)
+                return
 
         except Exception as e:
             logger.error(f"Error in play command: {e}", exc_info=True)
-            error_message = f"حدث خطأ أثناء محاولة التشغيل: {str(e)}"
-            if len(error_message) > 1500:  # Discord has a message length limit
+            error_message = f"❌ حدث خطأ: {str(e)}"
+            if len(error_message) > 1500:
                 error_message = error_message[:1500] + "..."
             await interaction.followup.send(error_message, ephemeral=True)
 
     except Exception as e:
         logger.error(f"Unexpected error: {e}", exc_info=True)
-        if not interaction.response.is_done():
-            await interaction.response.send_message("حدث خطأ غير متوقع", ephemeral=True)
-        else:
-            await interaction.followup.send("حدث خطأ غير متوقع", ephemeral=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ حدث خطأ غير متوقع", ephemeral=True)
+            else:
+                await interaction.followup.send("❌ حدث خطأ غير متوقع", ephemeral=True)
+        except Exception as send_error:
+            logger.error(f"Failed to send error message: {send_error}")
 
 @bot.tree.command(name="stop", description="إيقاف تشغيل المقطع الصوتي والخروج من القناة")
 async def stop(interaction: discord.Interaction):
@@ -342,21 +376,28 @@ async def stop(interaction: discord.Interaction):
 
         voice_client = interaction.guild.voice_client
         if voice_client:
-            if voice_client.is_playing():
-                voice_client.stop()
-                logger.info("Stopped playback")
-            await voice_client.disconnect()
-            logger.info("Disconnected from voice channel")
-            await interaction.followup.send("تم إيقاف التشغيل وقطع الاتصال ✅")
+            try:
+                if voice_client.is_playing():
+                    voice_client.stop()
+                    logger.info("Stopped playback")
+                await voice_client.disconnect()
+                logger.info("Disconnected from voice channel")
+                await interaction.followup.send("✅ تم إيقاف التشغيل وقطع الاتصال")
+            except Exception as e:
+                logger.error(f"Error while stopping/disconnecting: {e}")
+                await interaction.followup.send("❌ حدث خطأ أثناء محاولة الإيقاف", ephemeral=True)
         else:
             await interaction.followup.send("البوت غير متصل بأي قناة صوتية!", ephemeral=True)
 
     except Exception as e:
         logger.error(f"Error in stop command: {e}", exc_info=True)
-        if not interaction.response.is_done():
-            await interaction.response.send_message("حدث خطأ أثناء محاولة الإيقاف", ephemeral=True)
-        else:
-            await interaction.followup.send("حدث خطأ أثناء محاولة الإيقاف", ephemeral=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ حدث خطأ أثناء محاولة الإيقاف", ephemeral=True)
+            else:
+                await interaction.followup.send("❌ حدث خطأ أثناء محاولة الإيقاف", ephemeral=True)
+        except Exception as send_error:
+            logger.error(f"Failed to send error message: {send_error}")
 
 @bot.event
 async def on_voice_state_update(member, before, after):
