@@ -91,7 +91,23 @@ class MusicBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix='!', intents=intents)
         self.voice_states = {}
-        self.ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
+        self.YTDL_OPTIONS = {
+            'format': 'bestaudio/best',
+            'extractaudio': True,
+            'audioformat': 'mp3',
+            'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
+            'restrictfilenames': True,
+            'noplaylist': True,
+            'nocheckcertificate': True,
+            'ignoreerrors': False,
+            'logtostderr': False,
+            'quiet': True,
+            'no_warnings': True,
+            'default_search': 'auto',
+            'source_address': '0.0.0.0',
+            'force-ipv4': True
+        }
+        self.ytdl = yt_dlp.YoutubeDL(self.YTDL_OPTIONS)
         self.last_heartbeat = datetime.now()
         self.reconnect_attempts = 0
         self.MAX_RECONNECT_ATTEMPTS = 5
@@ -179,24 +195,14 @@ class MusicBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Failed to send error message: {e}")
 
-    async def get_audio_source(self, url: str, interaction: discord.Interaction) -> tuple:
-        """Get audio source from URL with retries"""
+    async def get_audio_player(self, url: str) -> tuple:
+        """Get audio player for a YouTube URL"""
         try:
-            # Send initial progress message
-            await interaction.edit_original_response(content="جاري تحميل المعلومات... ⏳")
-            
             # Extract video info
-            logger.info("Extracting video information...")
-            loop = asyncio.get_event_loop()
-            
-            try:
-                data = await loop.run_in_executor(None, lambda: self.ytdl.extract_info(url, download=False))
-            except Exception as e:
-                logger.error(f"Failed to extract video info: {e}")
-                await interaction.edit_original_response(content="❌ فشل في تحميل معلومات الفيديو")
-                raise
-            
-            await interaction.edit_original_response(content="جاري تجهيز الصوت... 🎵")
+            data = await asyncio.get_event_loop().run_in_executor(
+                None, 
+                lambda: self.ytdl.extract_info(url, download=False)
+            )
             
             if 'entries' in data:
                 data = data['entries'][0]
@@ -204,53 +210,24 @@ class MusicBot(commands.Bot):
             # Get direct audio URL
             audio_url = data.get('url')
             if not audio_url:
-                await interaction.edit_original_response(content="❌ لم يتم العثور على رابط الصوت")
                 raise ValueError("Could not get audio URL from video")
 
-            logger.info(f"Got audio URL: {audio_url[:50]}...")
-
             # Create FFmpeg audio source
-            try:
-                audio_source = discord.FFmpegPCMAudio(
-                    audio_url,
-                    executable=FFMPEG_PATH,
-                    **FFMPEG_OPTIONS
-                )
-                audio_source = discord.PCMVolumeTransformer(audio_source)
-            except Exception as e:
-                logger.error(f"Failed to create audio source: {e}")
-                await interaction.edit_original_response(content="❌ فشل في إنشاء مصدر الصوت")
-                raise
+            audio_source = discord.FFmpegPCMAudio(
+                audio_url,
+                **FFMPEG_OPTIONS
+            )
+            
+            # Add volume transformer
+            audio_source = discord.PCMVolumeTransformer(audio_source, volume=1.0)
             
             return audio_source, data.get('title', 'Unknown')
         except Exception as e:
-            logger.error(f"Error getting audio source: {e}", exc_info=True)
+            logger.error(f"Error getting audio player: {e}", exc_info=True)
             raise
 
 # Initialize bot with automatic reconnection
 bot = MusicBot()
-
-# YouTube DL options
-YTDL_OPTIONS = {
-    'format': 'bestaudio/best',
-    'extractaudio': True,
-    'audioformat': 'mp3',
-    'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
-    'restrictfilenames': True,
-    'noplaylist': True,
-    'nocheckcertificate': True,
-    'ignoreerrors': False,
-    'logtostderr': False,
-    'quiet': True,
-    'no_warnings': True,
-    'default_search': 'auto',
-    'source_address': '0.0.0.0',
-    'force-ipv4': True,
-    'cachedir': False,
-    'extract_flat': True,
-    'extractor_retries': 3,
-    'http_chunk_size': 10485760,
-}
 
 # FFmpeg options
 FFMPEG_OPTIONS = {
@@ -264,11 +241,6 @@ ssl_context.check_hostname = False
 ssl_context.verify_mode = ssl.CERT_NONE
 
 logger.info("Bot configuration completed")
-
-# Create YouTube DL client with updated SSL context
-print("\n=== Initializing YouTube-DL ===")
-ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
-logger.info("YouTube-DL initialized")
 
 async def ensure_voice_client(interaction: discord.Interaction, channel: discord.VoiceChannel) -> discord.VoiceClient:
     """Ensure bot is connected to voice channel"""
@@ -313,8 +285,8 @@ async def play(interaction: discord.Interaction, url: str):
             # Update status message
             await interaction.followup.send("🔄 جاري تحميل المقطع...")
             
-            # Get audio source
-            audio_source, title = await bot.get_audio_source(url, interaction)
+            # Get audio player
+            audio_source, title = await bot.get_audio_player(url)
             
             # Play the audio
             if voice_client.is_playing():
