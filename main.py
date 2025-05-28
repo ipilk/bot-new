@@ -17,23 +17,33 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 print("Token loaded")
 
 # Set FFmpeg path - for both local and Railway environment
-if os.environ.get('RAILWAY_ENVIRONMENT') == 'production':  # Railway environment
-    FFMPEG_PATH = "/usr/bin/ffmpeg"
-    print("Running on Railway - using system FFmpeg")
-else:  # Local environment
-    FFMPEG_PATH = os.path.join(os.getcwd(), "ffmpeg", "ffmpeg.exe")
-    if not os.path.exists(FFMPEG_PATH):
-        print(f"Warning: FFmpeg not found at {FFMPEG_PATH}")
-        # Try to find FFmpeg in system PATH
-        system_ffmpeg = which('ffmpeg')
-        if system_ffmpeg:
-            FFMPEG_PATH = system_ffmpeg
-            print(f"Using system FFmpeg at: {FFMPEG_PATH}")
-        else:
-            print("FFmpeg not found in system PATH either")
+def find_ffmpeg():
+    possible_paths = [
+        "/usr/bin/ffmpeg",           # Standard Linux/Railway path
+        "/nix/store/*/bin/ffmpeg",   # Nix package path
+        os.path.join(os.getcwd(), "ffmpeg", "ffmpeg.exe"),  # Local Windows path
+        which('ffmpeg')              # System PATH
+    ]
+    
+    for path in possible_paths:
+        if '*' in path:  # Handle Nix store path
+            import glob
+            matches = glob.glob(path)
+            if matches:
+                path = matches[0]
+        
+        if path and os.path.exists(path):
+            print(f"Found FFmpeg at: {path}")
+            return path
+    
+    print("FFmpeg not found in any standard location")
+    return None
 
-print(f"FFmpeg path: {FFMPEG_PATH}")
-print(f"FFmpeg exists: {os.path.exists(FFMPEG_PATH)}")
+FFMPEG_PATH = find_ffmpeg()
+if not FFMPEG_PATH:
+    print("Error: FFmpeg not found. Please make sure it's installed correctly.")
+else:
+    print(f"Using FFmpeg from: {FFMPEG_PATH}")
 
 # Bot configuration
 print("Setting up bot configuration...")
