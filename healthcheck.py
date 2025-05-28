@@ -1,128 +1,72 @@
 import os
 import sys
 import subprocess
-import shutil
+import logging
+from aiohttp import web
+import asyncio
 
-def check_ffmpeg():
-    print("Checking FFmpeg installation...")
-    
-    # Check environment variable first
-    ffmpeg_path = os.getenv('FFMPEG_PATH')
-    if ffmpeg_path and os.path.exists(ffmpeg_path):
-        print(f"Found FFmpeg at environment path: {ffmpeg_path}")
-        return True
-        
-    # Check in PATH
-    ffmpeg_in_path = shutil.which('ffmpeg')
-    if ffmpeg_in_path:
-        print(f"Found FFmpeg in PATH: {ffmpeg_in_path}")
-        return True
-        
-    # Try common locations
-    common_locations = [
-        '/usr/bin/ffmpeg',
-        '/usr/local/bin/ffmpeg',
-        '/opt/ffmpeg/ffmpeg'
-    ]
-    
-    for location in common_locations:
-        if os.path.exists(location):
-            print(f"Found FFmpeg at: {location}")
-            os.environ['FFMPEG_PATH'] = location
-            return True
-    
-    print("ERROR: FFmpeg not found!")
-    print("Searched locations:")
-    print(f"- FFMPEG_PATH: {os.getenv('FFMPEG_PATH', 'Not set')}")
-    print(f"- PATH: {os.getenv('PATH', 'Not set')}")
-    print("- Common locations:", common_locations)
-    return False
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def run_ffmpeg_test():
+async def healthcheck(request):
+    """Health check endpoint"""
     try:
-        # Try to run FFmpeg version command
-        result = subprocess.run(['ffmpeg', '-version'], 
-                              capture_output=True, 
-                              text=True)
-        if result.returncode == 0:
-            print("FFmpeg test successful!")
-            print("Version info:", result.stdout.split('\n')[0])
-            return True
-        else:
-            print("FFmpeg test failed!")
-            print("Error:", result.stderr)
-            return False
+        # Check if DISCORD_TOKEN is set
+        if not os.getenv('DISCORD_TOKEN'):
+            return web.Response(text="DISCORD_TOKEN not found", status=500)
+
+        # Check if FFmpeg is available
+        try:
+            subprocess.run(['ffmpeg', '-version'], 
+                         check=True, 
+                         capture_output=True)
+        except Exception as e:
+            return web.Response(text=f"FFmpeg check failed: {str(e)}", status=500)
+
+        return web.Response(text="OK", status=200)
     except Exception as e:
-        print("FFmpeg test failed with exception:", str(e))
-        return False
-
-def check_environment(skip_token_check=False):
-    if skip_token_check:
-        print("ℹ Skipping DISCORD_TOKEN check (build mode)")
-        return True
-
-    required_vars = ['DISCORD_TOKEN']
-    missing = [var for var in required_vars if not os.getenv(var)]
-    if missing:
-        print(f"✗ Missing environment variables: {', '.join(missing)}")
-        return False
-    print("✓ All required environment variables are set")
-    return True
-
-def check_python_packages():
-    required = [
-        'discord.py',
-        'yt-dlp',
-        'python-dotenv',
-        'PyNaCl',
-        'certifi',
-        'aiohttp'
-    ]
-    try:
-        import pkg_resources
-        missing = []
-        for package in required:
-            try:
-                pkg_resources.require(package)
-            except pkg_resources.DistributionNotFound:
-                missing.append(package)
-        if missing:
-            print(f"✗ Missing Python packages: {', '.join(missing)}")
-            return False
-        print("✓ All required Python packages are installed")
-        return True
-    except Exception as e:
-        print(f"✗ Error checking packages: {e}")
-        return False
+        return web.Response(text=f"Health check failed: {str(e)}", status=500)
 
 def main():
-    print("=== Starting Health Check ===")
-    
-    checks = [
-        ("FFmpeg Installation", check_ffmpeg),
-        ("FFmpeg Functionality", run_ffmpeg_test),
-        ("Environment Variables", lambda: check_environment(os.environ.get('DOCKER_BUILD') == 'true')),
-        ("Python Packages", check_python_packages)
-    ]
-    
-    all_passed = True
-    for check_name, check_func in checks:
-        print(f"\nRunning {check_name} check...")
+    """Main health check function"""
+    try:
+        # Check environment variables
+        if not os.getenv('DISCORD_TOKEN'):
+            logger.error("DISCORD_TOKEN not found")
+            return 1
+
+        # Check FFmpeg
         try:
-            if not check_func():
-                all_passed = False
-                print(f"❌ {check_name} check failed!")
-            else:
-                print(f"✅ {check_name} check passed!")
+            subprocess.run(['ffmpeg', '-version'], 
+                         check=True, 
+                         capture_output=True)
+            logger.info("FFmpeg check passed")
         except Exception as e:
-            all_passed = False
-            print(f"❌ {check_name} check failed with error: {str(e)}")
-    
-    print("\n=== Health Check Complete ===")
-    if not all_passed:
-        sys.exit(1)
-    sys.exit(0)
+            logger.error(f"FFmpeg check failed: {e}")
+            return 1
+
+        logger.info("All health checks passed")
+        return 0
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return 1
+
+async def start_server():
+    """Start the health check server"""
+    app = web.Application()
+    app.router.add_get('/health', healthcheck)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    await site.start()
+    logger.info("Health check server started on port 8080")
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "--server":
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(start_server())
+        loop.run_forever()
+    else:
+        sys.exit(main())
  
