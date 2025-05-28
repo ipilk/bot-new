@@ -4,19 +4,30 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && \
-    apt-get install -y ffmpeg opus-tools libopus0 && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y \
+    ffmpeg \
+    opus-tools \
+    libopus0 \
+    git \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && ffmpeg -version
 
-# Copy requirements first to leverage Docker cache
+# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application
+# Copy application files
 COPY . .
 
-# Verify FFmpeg installation
-RUN ffmpeg -version
+# Print Python and environment info
+RUN python -V && \
+    pip list && \
+    which ffmpeg && \
+    ffmpeg -version
+
+# Set environment variable to indicate we're in Railway
+ENV RAILWAY_ENVIRONMENT=production
 
 # Start the bot
 CMD ["python", "main.py"] 
