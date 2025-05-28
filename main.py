@@ -18,50 +18,23 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 print("Token loaded")
 
-# Set FFmpeg path and verify installation
-def verify_ffmpeg():
-    try:
-        # Try to run ffmpeg -version
-        result = subprocess.run(['ffmpeg', '-version'], 
-                              capture_output=True, 
-                              text=True)
-        if result.returncode == 0:
-            print("FFmpeg is available in system PATH")
-            return 'ffmpeg'
-    except Exception as e:
-        print(f"Error running ffmpeg: {e}")
+# Verify FFmpeg installation
+try:
+    subprocess.run(['ffmpeg', '-version'], check=True, capture_output=True)
+    FFMPEG_PATH = 'ffmpeg'
+    print("FFmpeg is available in system PATH")
+except subprocess.CalledProcessError:
+    print("Error: FFmpeg command failed")
+    FFMPEG_PATH = None
+except FileNotFoundError:
+    print("Error: FFmpeg not found in system PATH")
+    FFMPEG_PATH = None
 
-    # Check common paths
-    paths = [
-        'ffmpeg',
-        '/usr/bin/ffmpeg',
-        os.path.join(os.getcwd(), 'ffmpeg', 'ffmpeg.exe')
-    ]
-    
-    for path in paths:
-        try:
-            result = subprocess.run([path, '-version'], 
-                                  capture_output=True, 
-                                  text=True)
-            if result.returncode == 0:
-                print(f"Found working FFmpeg at: {path}")
-                return path
-        except Exception:
-            continue
-    
-    print("FFmpeg not found or not working")
-    return None
-
-print("Verifying FFmpeg installation...")
-FFMPEG_PATH = verify_ffmpeg()
 if not FFMPEG_PATH:
-    print("Error: FFmpeg not found or not working")
-    print("Environment information:")
+    print("Critical: FFmpeg is required but not found")
     print(f"Current directory: {os.getcwd()}")
     print(f"PATH: {os.environ.get('PATH')}")
-    print(f"Files in current directory: {os.listdir()}")
-else:
-    print(f"Using FFmpeg from: {FFMPEG_PATH}")
+    raise RuntimeError("FFmpeg not found")
 
 # Bot configuration
 print("Setting up bot configuration...")
