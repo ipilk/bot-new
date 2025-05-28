@@ -4,8 +4,6 @@ buildCommand = "pip install -r requirements.txt"
 
 [deploy]
 startCommand = "python main.py"
-healthcheckPath = "/"
-healthcheckTimeout = 100
 restartPolicyType = "on_failure"
 
 [phases.setup]
