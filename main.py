@@ -13,6 +13,7 @@ import subprocess
 import platform
 import sys
 import logging
+import time
 from healthcheck import main as health_check
 
 # Set up logging
@@ -23,6 +24,8 @@ logger = logging.getLogger('discord_bot')
 # Global variables for voice state
 voice_clients = {}
 current_players = {}
+last_heartbeat = 0
+HEARTBEAT_INTERVAL = 60  # seconds
 
 print("\n=== Bot Initialization Started ===")
 logger.info(f"Python version: {platform.python_version()}")
@@ -76,7 +79,69 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
 intents.guilds = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+intents.presences = True  # Enable presence updates
+
+class MusicBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix='!', intents=intents)
+        self.reconnect_attempts = 0
+        self.MAX_RECONNECT_ATTEMPTS = 5
+        self.background_tasks = []
+        
+    async def setup_hook(self):
+        """Setup hook that gets called when the bot starts"""
+        self.background_tasks.append(self.loop.create_task(self.status_task()))
+        self.background_tasks.append(self.loop.create_task(self.heartbeat_task()))
+        logger.info("Setup hook completed")
+
+    async def status_task(self):
+        """Task to update bot's status and monitor connection"""
+        while not self.is_closed():
+            try:
+                if self.is_ws_ratelimited():
+                    logger.warning("Bot is being rate limited!")
+                
+                if not self.is_ready():
+                    logger.warning("Bot is not ready!")
+                    
+                await self.change_presence(
+                    activity=discord.Activity(
+                        type=discord.ActivityType.listening,
+                        name="/play | 🎵"
+                    ),
+                    status=discord.Status.online
+                )
+                await asyncio.sleep(60)
+            except Exception as e:
+                logger.error(f"Error in status task: {e}", exc_info=True)
+                await asyncio.sleep(5)
+
+    async def heartbeat_task(self):
+        """Task to monitor bot's heartbeat"""
+        global last_heartbeat
+        while not self.is_closed():
+            try:
+                current_time = time.time()
+                last_heartbeat = current_time
+                latency = self.latency * 1000
+                logger.info(f"Heartbeat - Latency: {latency:.2f}ms")
+                
+                if latency > 1000:  # High latency warning
+                    logger.warning(f"High latency detected: {latency:.2f}ms")
+                
+                await asyncio.sleep(HEARTBEAT_INTERVAL)
+            except Exception as e:
+                logger.error(f"Error in heartbeat task: {e}", exc_info=True)
+                await asyncio.sleep(5)
+
+    async def close(self):
+        """Clean up when the bot is shutting down"""
+        logger.info("Bot is shutting down...")
+        for task in self.background_tasks:
+            task.cancel()
+        await super().close()
+
+bot = MusicBot()
 
 # YouTube DL options
 YTDL_OPTIONS = {
@@ -155,6 +220,32 @@ async def on_ready():
         logger.info(f"Synced {len(synced)} command(s)")
     except Exception as e:
         logger.error(f"Failed to sync commands: {e}", exc_info=True)
+
+@bot.event
+async def on_disconnect():
+    """Handle disconnection"""
+    logger.warning("Bot disconnected from Discord!")
+    bot.reconnect_attempts += 1
+    if bot.reconnect_attempts <= bot.MAX_RECONNECT_ATTEMPTS:
+        logger.info(f"Attempting to reconnect... (Attempt {bot.reconnect_attempts}/{bot.MAX_RECONNECT_ATTEMPTS})")
+    else:
+        logger.critical("Max reconnection attempts reached!")
+
+@bot.event
+async def on_connect():
+    """Handle successful connection"""
+    logger.info("Bot connected to Discord!")
+    bot.reconnect_attempts = 0
+
+@bot.event
+async def on_resumed():
+    """Handle session resume"""
+    logger.info("Session resumed!")
+
+@bot.event
+async def on_error(event, *args, **kwargs):
+    """Handle errors"""
+    logger.error(f"Error in {event}", exc_info=True)
 
 @bot.tree.command(name="play", description="تشغيل مقطع صوتي من يوتيوب")
 @app_commands.describe(url="رابط مقطع اليوتيوب")
@@ -253,6 +344,10 @@ async def on_voice_state_update(member, before, after):
 
 logger.info("Starting bot...")
 try:
-    bot.run(TOKEN)
+    bot.run(TOKEN, log_handler=None, reconnect=True)
+except discord.errors.LoginFailure:
+    logger.critical("Failed to login: Invalid token")
 except Exception as e:
-    logger.critical(f"Error starting bot: {e}", exc_info=True) 
+    logger.critical(f"Failed to start bot: {e}", exc_info=True)
+finally:
+    logger.info("Bot shutdown complete") 
