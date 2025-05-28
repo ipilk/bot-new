@@ -8,9 +8,11 @@ RUN apt-get update && \
     ffmpeg \
     opus-tools \
     libopus0 \
+    libopus-dev \
     git \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ffmpeg -version
 
 # Install Python dependencies
 COPY requirements.txt .
@@ -21,7 +23,8 @@ COPY . .
 
 # Set environment for build phase
 ENV DOCKER_BUILD=true \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    FFMPEG_PATH=/usr/bin/ffmpeg
 
 # Run health checks in build mode
 RUN python healthcheck.py

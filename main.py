@@ -200,8 +200,8 @@ YTDL_OPTIONS = {
 
 # FFmpeg options
 FFMPEG_OPTIONS = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn'
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -analyzeduration 0 -loglevel 0',
+    'options': '-vn -acodec libopus -b:a 192k -filter:a volume=1.0'
 }
 
 # Set SSL context for requests
@@ -265,11 +265,9 @@ async def get_audio_source(url: str) -> tuple:
 async def play(interaction: discord.Interaction, url: str):
     """Play a song from YouTube"""
     try:
-        # Initial response
         await interaction.response.defer(ephemeral=False, thinking=True)
         logger.info(f"Received play command from {interaction.user} for URL: {url}")
 
-        # Check if user is in a voice channel
         if not interaction.user.voice:
             await interaction.followup.send("يجب أن تكون في قناة صوتية!", ephemeral=True)
             return
@@ -290,27 +288,52 @@ async def play(interaction: discord.Interaction, url: str):
             
             logger.info(f"Connected to voice channel: {voice_channel.name}")
 
-            # Get song info
-            logger.info("Extracting video information...")
-            loop = asyncio.get_event_loop()
-            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
+            # Get song info with retries
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"Extracting video information (attempt {attempt + 1}/{max_retries})...")
+                    loop = asyncio.get_event_loop()
+                    data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
+                    break
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        raise
+                    logger.warning(f"Attempt {attempt + 1} failed, retrying...")
+                    await asyncio.sleep(1)
             
             if 'entries' in data:
                 data = data['entries'][0]
 
-            # Create FFmpeg audio source
+            # Create FFmpeg audio source with proper error handling
             logger.info("Creating audio source...")
-            audio_source = discord.FFmpegPCMAudio(
-                data['url'],
-                **FFMPEG_OPTIONS
-            )
+            try:
+                audio_source = discord.FFmpegPCMAudio(
+                    data['url'],
+                    **FFMPEG_OPTIONS
+                )
+                audio_source = discord.PCMVolumeTransformer(audio_source, volume=1.0)
+            except Exception as e:
+                logger.error(f"Failed to create audio source: {e}", exc_info=True)
+                await interaction.followup.send("فشل في إنشاء مصدر الصوت. الرجاء المحاولة مرة أخرى.", ephemeral=True)
+                return
 
-            # Play the audio
+            # Play the audio with callback
+            def after_playing(error):
+                if error:
+                    logger.error(f"Error in playback: {error}")
+                    asyncio.run_coroutine_threadsafe(
+                        interaction.followup.send("حدث خطأ أثناء التشغيل. جاري المحاولة مرة أخرى..."),
+                        voice_client.loop
+                    )
+                else:
+                    logger.info("Finished playing audio successfully")
+
             if voice_client.is_playing():
                 voice_client.stop()
                 logger.info("Stopped current playback")
 
-            voice_client.play(audio_source)
+            voice_client.play(audio_source, after=after_playing)
             logger.info(f"Started playing: {data.get('title', 'Unknown')}")
             
             await interaction.followup.send(f"🎵 جاري تشغيل: **{data.get('title', 'Unknown')}**")
