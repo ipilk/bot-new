@@ -20,11 +20,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY . .
 
-# Run health checks
+# Run health checks in build mode
+ENV DOCKER_BUILD=true
 RUN python healthcheck.py
 
 # Set environment variable to indicate we're in Railway
-ENV RAILWAY_ENVIRONMENT=production
+ENV DOCKER_BUILD=false \
+    RAILWAY_ENVIRONMENT=production
 
 # Start the bot
 CMD ["python", "main.py"] 

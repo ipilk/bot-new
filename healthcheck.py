@@ -17,7 +17,11 @@ def check_ffmpeg():
         print(f"✗ FFmpeg error: {e}")
         return False
 
-def check_environment():
+def check_environment(skip_token_check=False):
+    if skip_token_check:
+        print("ℹ Skipping DISCORD_TOKEN check (build mode)")
+        return True
+
     required_vars = ['DISCORD_TOKEN']
     missing = [var for var in required_vars if not os.getenv(var)]
     if missing:
@@ -53,9 +57,14 @@ def check_python_packages():
         return False
 
 def main():
+    # Check if we're in build mode
+    is_build = os.environ.get('DOCKER_BUILD') == 'true'
+    
     print("\n=== Bot Health Check ===")
+    print(f"Mode: {'Build' if is_build else 'Runtime'}")
+    
     checks = [
-        ("Environment Variables", check_environment),
+        ("Environment Variables", lambda: check_environment(is_build)),
         ("FFmpeg Installation", check_ffmpeg),
         ("Python Packages", check_python_packages)
     ]

@@ -11,12 +11,20 @@ from shutil import which
 import glob
 import subprocess
 import platform
+import sys
+from healthcheck import main as health_check
 
 print("\n=== Bot Initialization Started ===")
 print(f"Python version: {platform.python_version()}")
 print(f"Operating System: {platform.system()} {platform.release()}")
 print(f"Running in environment: {os.environ.get('RAILWAY_ENVIRONMENT', 'local')}")
 print(f"Current working directory: {os.getcwd()}")
+
+# Run health check
+print("\n=== Running Health Check ===")
+if health_check() != 0:
+    print("Critical: Health check failed. Exiting.")
+    sys.exit(1)
 
 # Load environment variables
 print("\n=== Loading Environment Variables ===")
