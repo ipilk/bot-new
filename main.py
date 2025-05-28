@@ -193,7 +193,9 @@ YTDL_OPTIONS = {
     'quiet': True,
     'no_warnings': True,
     'default_search': 'auto',
-    'source_address': '0.0.0.0'
+    'source_address': '0.0.0.0',
+    'prefer_insecure': True,
+    'legacy_server_connect': True
 }
 
 # FFmpeg options
@@ -202,9 +204,14 @@ FFMPEG_OPTIONS = {
     'options': '-vn'
 }
 
+# Set SSL context for requests
+ssl_context = ssl.create_default_context()
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
+
 logger.info("Bot configuration completed")
 
-# Create YouTube DL client
+# Create YouTube DL client with updated SSL context
 print("\n=== Initializing YouTube-DL ===")
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 logger.info("YouTube-DL initialized")
@@ -229,10 +236,17 @@ async def get_audio_source(url: str) -> tuple:
     """Get audio source from URL"""
     loop = asyncio.get_event_loop()
     try:
+        # Configure SSL context for this request
+        original_ssl_context = ssl.get_default_verify_paths()
+        ssl._create_default_https_context = ssl._create_unverified_context
+        
         data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
         
         if 'entries' in data:
             data = data['entries'][0]
+
+        # Reset SSL context to original state
+        ssl._create_default_https_context = lambda: original_ssl_context
 
         return (
             discord.FFmpegPCMAudio(
