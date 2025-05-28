@@ -12,11 +12,16 @@ import glob
 import subprocess
 
 print("Starting bot initialization...")
+print(f"Running in environment: {os.environ.get('RAILWAY_ENVIRONMENT', 'local')}")
 
 # Load environment variables
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
-print("Token loaded")
+if not TOKEN:
+    print("Error: DISCORD_TOKEN not found in environment variables")
+    print("Available environment variables:", [k for k in os.environ.keys() if not k.startswith('PATH')])
+    raise RuntimeError("DISCORD_TOKEN is required")
+print("Token loaded successfully")
 
 # Verify FFmpeg installation
 try:
