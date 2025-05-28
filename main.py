@@ -7,6 +7,7 @@ import asyncio
 import certifi
 import ssl
 from dotenv import load_dotenv
+from shutil import which
 
 print("Starting bot initialization...")
 
@@ -16,10 +17,20 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 print("Token loaded")
 
 # Set FFmpeg path - for both local and Railway environment
-if os.path.exists("/usr/bin/ffmpeg"):  # Railway environment
+if os.environ.get('RAILWAY_ENVIRONMENT') == 'production':  # Railway environment
     FFMPEG_PATH = "/usr/bin/ffmpeg"
+    print("Running on Railway - using system FFmpeg")
 else:  # Local environment
-    FFMPEG_PATH = r"C:\Users\ararr\Desktop\12\ffmpeg\ffmpeg.exe"
+    FFMPEG_PATH = os.path.join(os.getcwd(), "ffmpeg", "ffmpeg.exe")
+    if not os.path.exists(FFMPEG_PATH):
+        print(f"Warning: FFmpeg not found at {FFMPEG_PATH}")
+        # Try to find FFmpeg in system PATH
+        system_ffmpeg = which('ffmpeg')
+        if system_ffmpeg:
+            FFMPEG_PATH = system_ffmpeg
+            print(f"Using system FFmpeg at: {FFMPEG_PATH}")
+        else:
+            print("FFmpeg not found in system PATH either")
 
 print(f"FFmpeg path: {FFMPEG_PATH}")
 print(f"FFmpeg exists: {os.path.exists(FFMPEG_PATH)}")
