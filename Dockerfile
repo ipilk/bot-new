@@ -14,6 +14,11 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/* \
     && ffmpeg -version
 
+# Verify FFmpeg installation
+RUN ffmpeg -version && \
+    ffmpeg -protocols | grep https && \
+    ffmpeg -codecs | grep opus
+
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -24,7 +29,8 @@ COPY . .
 # Set environment for build phase
 ENV DOCKER_BUILD=true \
     PYTHONUNBUFFERED=1 \
-    FFMPEG_PATH=/usr/bin/ffmpeg
+    FFMPEG_PATH=/usr/bin/ffmpeg \
+    PATH="/usr/local/bin:${PATH}"
 
 # Run health checks in build mode
 RUN python healthcheck.py

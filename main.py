@@ -94,6 +94,8 @@ class MusicBot(commands.Bot):
         self.background_tasks = []
         self.initial_extensions = []
         self.start_time = time.time()
+        self.voice_states = {}
+        self.ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
         
     async def setup_hook(self):
         """Setup hook that gets called when the bot starts"""
@@ -177,6 +179,39 @@ class MusicBot(commands.Bot):
         """Called when an error occurs"""
         logger.error(f"Error in {event_method}: {traceback.format_exc()}")
 
+    async def get_audio_source(self, url: str) -> tuple:
+        """Get audio source from URL with retries"""
+        try:
+            # Extract video info
+            logger.info("Extracting video information...")
+            loop = asyncio.get_event_loop()
+            data = await loop.run_in_executor(None, lambda: self.ytdl.extract_info(url, download=False))
+            
+            if 'entries' in data:
+                data = data['entries'][0]
+
+            # Get direct audio URL
+            audio_url = data.get('url')
+            if not audio_url:
+                raise ValueError("Could not get audio URL from video")
+
+            logger.info(f"Got audio URL: {audio_url[:50]}...")  # Log only first 50 chars for safety
+
+            # Create FFmpeg audio source
+            audio_source = discord.FFmpegPCMAudio(
+                audio_url,
+                executable=FFMPEG_PATH,
+                **FFMPEG_OPTIONS
+            )
+            
+            # Add volume transformer
+            audio_source = discord.PCMVolumeTransformer(audio_source)
+            
+            return audio_source, data.get('title', 'Unknown')
+        except Exception as e:
+            logger.error(f"Error getting audio source: {e}", exc_info=True)
+            raise
+
 bot = MusicBot()
 
 # YouTube DL options
@@ -194,14 +229,17 @@ YTDL_OPTIONS = {
     'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
-    'prefer_insecure': True,
-    'legacy_server_connect': True
+    'force-ipv4': True,
+    'cachedir': False,
+    'extract_flat': True,
+    'extractor_retries': 3,
+    'http_chunk_size': 10485760,
 }
 
 # FFmpeg options
 FFMPEG_OPTIONS = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -analyzeduration 0 -loglevel 0',
-    'options': '-vn -acodec libopus -b:a 192k -filter:a volume=1.0'
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn -ar 48000 -ac 2 -b:a 192k'
 }
 
 # Set SSL context for requests
@@ -232,34 +270,6 @@ async def ensure_voice_client(interaction: discord.Interaction, channel: discord
     voice_clients[guild_id] = voice_client
     return voice_client
 
-async def get_audio_source(url: str) -> tuple:
-    """Get audio source from URL"""
-    loop = asyncio.get_event_loop()
-    try:
-        # Configure SSL context for this request
-        original_ssl_context = ssl.get_default_verify_paths()
-        ssl._create_default_https_context = ssl._create_unverified_context
-        
-        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
-        
-        if 'entries' in data:
-            data = data['entries'][0]
-
-        # Reset SSL context to original state
-        ssl._create_default_https_context = lambda: original_ssl_context
-
-        return (
-            discord.FFmpegPCMAudio(
-                data['url'],
-                executable=FFMPEG_PATH,
-                **FFMPEG_OPTIONS
-            ),
-            data.get('title', 'Unknown title')
-        )
-    except Exception as e:
-        logger.error(f"Error getting audio source: {e}", exc_info=True)
-        raise
-
 @bot.tree.command(name="play", description="تشغيل مقطع صوتي من يوتيوب")
 @app_commands.describe(url="رابط مقطع اليوتيوب")
 async def play(interaction: discord.Interaction, url: str):
@@ -288,62 +298,36 @@ async def play(interaction: discord.Interaction, url: str):
             
             logger.info(f"Connected to voice channel: {voice_channel.name}")
 
-            # Get song info with retries
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    logger.info(f"Extracting video information (attempt {attempt + 1}/{max_retries})...")
-                    loop = asyncio.get_event_loop()
-                    data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
-                    break
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        raise
-                    logger.warning(f"Attempt {attempt + 1} failed, retrying...")
-                    await asyncio.sleep(1)
+            # Get audio source
+            audio_source, title = await bot.get_audio_source(url)
             
-            if 'entries' in data:
-                data = data['entries'][0]
-
-            # Create FFmpeg audio source with proper error handling
-            logger.info("Creating audio source...")
-            try:
-                audio_source = discord.FFmpegPCMAudio(
-                    data['url'],
-                    **FFMPEG_OPTIONS
-                )
-                audio_source = discord.PCMVolumeTransformer(audio_source, volume=1.0)
-            except Exception as e:
-                logger.error(f"Failed to create audio source: {e}", exc_info=True)
-                await interaction.followup.send("فشل في إنشاء مصدر الصوت. الرجاء المحاولة مرة أخرى.", ephemeral=True)
-                return
-
             # Play the audio with callback
             def after_playing(error):
                 if error:
                     logger.error(f"Error in playback: {error}")
                     asyncio.run_coroutine_threadsafe(
-                        interaction.followup.send("حدث خطأ أثناء التشغيل. جاري المحاولة مرة أخرى..."),
-                        voice_client.loop
+                        interaction.followup.send("حدث خطأ أثناء التشغيل"),
+                        bot.loop
                     )
-                else:
-                    logger.info("Finished playing audio successfully")
 
             if voice_client.is_playing():
                 voice_client.stop()
                 logger.info("Stopped current playback")
 
             voice_client.play(audio_source, after=after_playing)
-            logger.info(f"Started playing: {data.get('title', 'Unknown')}")
+            logger.info(f"Started playing: {title}")
             
-            await interaction.followup.send(f"🎵 جاري تشغيل: **{data.get('title', 'Unknown')}**")
+            await interaction.followup.send(f"🎵 جاري تشغيل: **{title}**")
 
         except Exception as e:
-            logger.error(f"Error playing audio: {e}", exc_info=True)
-            await interaction.followup.send(f"حدث خطأ أثناء محاولة التشغيل: {str(e)}", ephemeral=True)
+            logger.error(f"Error in play command: {e}", exc_info=True)
+            error_message = f"حدث خطأ أثناء محاولة التشغيل: {str(e)}"
+            if len(error_message) > 1500:  # Discord has a message length limit
+                error_message = error_message[:1500] + "..."
+            await interaction.followup.send(error_message, ephemeral=True)
 
     except Exception as e:
-        logger.error(f"Unexpected error in play command: {e}", exc_info=True)
+        logger.error(f"Unexpected error: {e}", exc_info=True)
         if not interaction.response.is_done():
             await interaction.response.send_message("حدث خطأ غير متوقع", ephemeral=True)
         else:
