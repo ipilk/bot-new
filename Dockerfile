@@ -20,11 +20,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY . .
 
-# Print Python and environment info
-RUN python -V && \
-    pip list && \
-    which ffmpeg && \
-    ffmpeg -version
+# Run health checks
+RUN python healthcheck.py
 
 # Set environment variable to indicate we're in Railway
 ENV RAILWAY_ENVIRONMENT=production
